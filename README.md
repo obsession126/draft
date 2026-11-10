@@ -31,3 +31,7 @@ The shared, module-by-module development plan, checkpoints, and acceptance crite
 ## Analytics demo
 
 The synthetic telemetry simulator, nonlinear anomaly detector, JSON contract, and local API are documented in [analytics/README.md](./analytics/README.md).
+
+The Django REST Framework backend setup, authentication, API contract, and analytics bridge are documented in [backend/README.md](./backend/README.md).
+
+The Next.js dashboard setup and end-to-end simulator workflow are documented in [frontend/my-hub/README.md](./frontend/my-hub/README.md).

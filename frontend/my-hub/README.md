@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Orbital Health frontend
 
-## Getting Started
+Next.js mission-control dashboard connected to the DRF API. The interface reads persisted telemetry, feature history and review alerts from the backend; it does not substitute hard-coded readings for the live data flow.
 
-First, run the development server:
+## Local end-to-end demo (Windows PowerShell)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Install dependencies once from the repository root:
+
+```powershell
+.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+Set-Location frontend\my-hub
+npm ci
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Start Django in one terminal:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```powershell
+Set-Location D:\NASA\draft
+.\backend\.venv\Scripts\python.exe backend\manage.py migrate
+.\backend\.venv\Scripts\python.exe backend\manage.py setup_demo --username crew --password 'Choose-a-local-demo-password'
+.\backend\.venv\Scripts\python.exe backend\manage.py runserver 127.0.0.1:8000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run the simulator/analysis/persistence pipeline in a second terminal:
 
-## Learn More
+```powershell
+Set-Location D:\NASA\draft
+.\backend\.venv\Scripts\python.exe backend\manage.py run_mission_simulator --profile-id crew-01 --scenario demo --interval 1 --seed 42
+```
 
-To learn more about Next.js, take a look at the following resources:
+This command generates the same versioned 36-feature events as the analytics module, calibrates and runs the nonlinear detector, validates and stores each event, and creates review alerts for non-normal results. The `demo` sequence includes baseline, nonlinear interaction, sensor artifact, gradual drift, signal-loss and radiation scenarios. Use `--scenario normal` for a stable baseline, `--max-events 10` for a finite run, or Ctrl+C to stop.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Start the web app in a third terminal:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```powershell
+Set-Location D:\NASA\draft\frontend\my-hub
+npm run dev
+```
 
-## Deploy on Vercel
+Open [http://localhost:3000](http://localhost:3000), sign in with the username/password passed to `setup_demo`, and select the generated crew profile. The API token is held in the current browser session and is removed when signing out. The dashboard refreshes its persisted backend data every five seconds.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## API connection
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The app defaults to `http://127.0.0.1:8000`. To use another backend, set `NEXT_PUBLIC_API_BASE_URL` in `.env.local` before starting Next.js:
+
+```dotenv
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
+
+The backend's `CORS_ALLOWED_ORIGINS` must include the exact browser origin. See [`../../../backend/README.md`](../../../backend/README.md) for all endpoints, response shapes, auth rules and constraints, or open Swagger at `/api/docs/`.
+
+## Frontend checks
+
+```powershell
+npm run lint
+npx tsc --noEmit
+npm run build
+```
+
+The chart uses the series endpoint and renders missing samples as gaps (not normal/zero values). Analysis scores are empirical ranks, not probabilities, and all demo data is visibly synthetic and not clinically validated.

@@ -22,16 +22,20 @@ class AnalyticsEngine:
         interval_seconds: float = 1.0,
         calibration_samples: int = 768,
         history_limit: int = 500,
+        profile_id: str = "crew-01",
+        start_index: int = 0,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be greater than zero.")
         if history_limit <= 0:
             raise ValueError("history_limit must be greater than zero.")
+        if start_index < 0:
+            raise ValueError("start_index must not be negative.")
 
         self.scenario = scenario
         self.interval_seconds = interval_seconds
         self.calibration_samples = calibration_samples
-        self._simulator = TelemetrySimulator(seed=seed)
+        self._simulator = TelemetrySimulator(seed=seed, profile_id=profile_id)
         self._detector = NonlinearAnomalyDetector(seed=seed)
         calibration_simulator = TelemetrySimulator(seed=seed + 1)
         calibration = [
@@ -44,7 +48,7 @@ class AnalyticsEngine:
         self._condition = threading.Condition(self._lock)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._sample_index = 0
+        self._sample_index = start_index
         self._started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     def start(self) -> None:
