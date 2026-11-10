@@ -22,3 +22,8 @@ The project is structured into three main isolated modules to ensure high perfor
  ├── ⚙️ backend/       # Core Business Logic, Storage & API Gateway
  ├── 📊 analytics/     # Telemetry Processing & Anomaly Detection Pipeline
  └── 📄 docs/          # Project Documentation & Pitch Presentation
+```
+
+## Roadmap
+
+The shared, module-by-module development plan, checkpoints, and acceptance criteria are in [docs/ROADMAP.md](./docs/ROADMAP.md).
