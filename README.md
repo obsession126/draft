@@ -27,3 +27,7 @@ The project is structured into three main isolated modules to ensure high perfor
 ## Roadmap
 
 The shared, module-by-module development plan, checkpoints, and acceptance criteria are in [docs/ROADMAP.md](./docs/ROADMAP.md).
+
+## Analytics demo
+
+The synthetic telemetry simulator, nonlinear anomaly detector, JSON contract, and local API are documented in [analytics/README.md](./analytics/README.md).
