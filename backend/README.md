@@ -12,11 +12,11 @@ Run these commands from the repository root:
 py -m venv backend\.venv
 .\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 .\backend\.venv\Scripts\python.exe backend\manage.py migrate
-.\backend\.venv\Scripts\python.exe backend\manage.py setup_demo --username crew --password 'Choose-a-local-demo-password'
+.\backend\.venv\Scripts\python.exe backend\manage.py setup_demo --username crew --password 'REPLACE-WITH-A-LOCAL-PASSWORD'
 .\backend\.venv\Scripts\python.exe backend\manage.py runserver 127.0.0.1:8000
 ```
 
-`setup_demo` creates a local account and its `crew-01` profile without shipping a default password or exposing an API token. Use the supplied credentials to sign in from the frontend. To create a regular user instead, use `createsuperuser` and create the profile through the authenticated API.
+Replace the example password with one you choose; it is not a built-in credential. `setup_demo` creates a local account and its `crew-01` profile without shipping a default password or exposing an API token. Use the same username/password in the frontend. If the account already exists, `setup_demo` verifies the supplied password and will not reset it. To change an existing user's password, run `.\backend\.venv\Scripts\python.exe backend\manage.py changepassword crew` and enter a new password when prompted. To create a regular user instead, use `createsuperuser` and create the profile through the authenticated API.
 
 By default, the local backend uses SQLite at `backend\db.sqlite3`, permits the local Next.js origins `http://localhost:3000` and `http://127.0.0.1:3000`, and runs with Django debug enabled. Configuration can be overridden with environment variables:
 
@@ -92,6 +92,7 @@ All JSON timestamps are ISO-8601 with timezone information. Analytics payloads p
 | `GET, POST /api/v1/profiles/` | Token | List owned profiles or create one. |
 | `GET /api/v1/profiles/{profile_id}/` | Token | Read an owned profile. |
 | `GET /api/v1/profiles/{profile_id}/dashboard/` | Token | Latest event, open alerts, count, and sync freshness. |
+| `GET /api/v1/profiles/{profile_id}/insights/?limit=120` | Token | Profile report: recent event summary, all 36 feature histories and robust personal-baseline comparisons, plus evidence-linked insights. `limit` is 1–500. |
 | `GET /api/v1/profiles/{profile_id}/series/?feature=hr_bpm` | Token | Ordered values for one catalog feature. Supports `since`, `until`, and `limit` (1–500). |
 | `GET /api/v1/metadata/parameters/` | Token | Canonical feature names, labels, units, and categories. |
 | `POST /api/v1/telemetry/ingest/` | Token | Ingest one event wrapped as `{"event": <canonical event>}`. Same event ID and payload returns `200`; changed content returns `409`. |
@@ -108,6 +109,10 @@ All JSON timestamps are ISO-8601 with timezone information. Analytics payloads p
 The SSE endpoint requires an Authorization header; native browser `EventSource` cannot set one. A browser client should use `fetch()` with the token header and read the response stream, or use an authenticated same-origin proxy. Do not weaken API authentication by putting the token in a query parameter.
 
 The ingest response includes `event_id`, `profile_id`, `created`, `duplicate`, `analysis_status`, `received_at`, and `schema_version`. Batch responses include `batch_id`, `event_ids`, `created_count`, `duplicate_count`, `created_at`, `schema_version`, and `idempotent_replay`. Alert states are `open`, `acknowledged`, and `resolved`.
+
+The profile insights response includes `schema_version`, profile metadata, report window, summary, ordered `metrics`, and `insights`. Each metric includes its latest quality/value, personal reference statistics, status, and up to 48 historical points. An insight includes `code`, `severity`, `title`, `summary`, optional `interaction_summary`, evidence, recommended checks, contributing metric names, and model relationship labels. Frontend clients should treat this endpoint as the source for explanatory report content rather than reconstructing explanations from anomaly scores.
+
+The personal comparison uses the profile's earlier normal, good-quality samples (median and median absolute deviation); it is an exploratory change indicator, not a medical threshold. The detector's empirical tail rank is not a probability. Model feature contributions identify patterns the model used, not causal relationships. Synthetic values and scenario labels must remain visibly identified as synthetic.
 
 ## Demo limitations
 

@@ -32,6 +32,7 @@ from api.serializers import (
     HealthResponseSerializer,
     HealthAlertSerializer,
     ParameterCatalogResponseSerializer,
+    ProfileReportSerializer,
     SeriesResponseSerializer,
     SyncBatchSerializer,
     SyncBatchResponseSerializer,
@@ -39,7 +40,7 @@ from api.serializers import (
     TelemetryEventInputSerializer,
     TelemetryEventSerializer,
 )
-from api.services import create_sync_batch, ingest_event
+from api.services import build_profile_report, create_sync_batch, ingest_event
 
 
 class HealthView(APIView):
@@ -287,6 +288,27 @@ class ProfileSeriesView(APIView):
                 "count": len(points),
             }
         )
+
+
+class ProfileInsightsView(APIView):
+    permission_classes = [IsAuthenticated, CanIngestProfile]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="limit",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Maximum number of recent events used for the report (1–500).",
+            )
+        ],
+        responses=ProfileReportSerializer,
+    )
+    def get(self, request, profile_id):
+        profile = _get_ingest_profile(profile_id)
+        self.check_object_permissions(request, profile)
+        limit = _parse_limit(request.query_params.get("limit", "120"))
+        return Response(build_profile_report(profile, limit=limit))
 
 
 class ParameterCatalogView(APIView):

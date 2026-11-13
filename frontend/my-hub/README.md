@@ -17,7 +17,7 @@ Start Django in one terminal:
 ```powershell
 Set-Location D:\NASA\draft
 .\backend\.venv\Scripts\python.exe backend\manage.py migrate
-.\backend\.venv\Scripts\python.exe backend\manage.py setup_demo --username crew --password 'Choose-a-local-demo-password'
+.\backend\.venv\Scripts\python.exe backend\manage.py setup_demo --username crew --password 'REPLACE-WITH-A-LOCAL-PASSWORD'
 .\backend\.venv\Scripts\python.exe backend\manage.py runserver 127.0.0.1:8000
 ```
 
@@ -37,7 +37,7 @@ Set-Location D:\NASA\draft\frontend\my-hub
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), sign in with the username/password passed to `setup_demo`, and select the generated crew profile. The API token is held in the current browser session and is removed when signing out. The dashboard refreshes its persisted backend data every five seconds.
+Replace the example password before running `setup_demo`; it is not a built-in credential. If `crew` already exists with another password, reset it with `.\backend\.venv\Scripts\python.exe backend\manage.py changepassword crew`. Open [http://localhost:3000](http://localhost:3000), sign in with the username/password for that backend database, and select the generated crew profile. The API token is held in the current browser session and is removed when signing out. The dashboard refreshes its persisted backend data every five seconds.
 
 ## API connection
 
@@ -48,6 +48,8 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 The backend's `CORS_ALLOWED_ORIGINS` must include the exact browser origin. See [`../../../backend/README.md`](../../../backend/README.md) for all endpoints, response shapes, auth rules and constraints, or open Swagger at `/api/docs/`.
+
+The profile report is fetched from `GET /api/v1/profiles/{profile_id}/insights/?limit=120`. It provides all catalog metrics, per-profile robust reference statistics, recent history, model-contribution labels, evidence, and suggested checks. The dashboard presents contribution explanations as non-causal model interpretations; empirical ranks are not probabilities, and synthetic measurements are not clinically validated.
 
 ## Frontend checks
 

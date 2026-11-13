@@ -116,6 +116,74 @@ export type Series = {
   count: number;
 };
 
+export type ProfileReport = {
+  schema_version: string;
+  profile: Pick<CrewProfile, "profile_id" | "display_name" | "mission_name" | "mission_phase">;
+  generated_at: string;
+  window: {
+    sample_count: number;
+    recent_sample_count: number;
+    baseline_sample_count: number;
+    first_measured_at: string | null;
+    last_measured_at: string | null;
+    baseline_source: string;
+    baseline_method: string;
+    baseline_ready_metric_count: number;
+    baseline_minimum_samples: number;
+    is_synthetic: boolean;
+  };
+  summary: {
+    latest_analysis_status: AnalysisStatus | null;
+    recent_event_count: number;
+    recent_anomaly_review_count: number;
+    recent_data_quality_review_count: number;
+    recent_insufficient_data_count: number;
+    current_quality_issue_count: number;
+    historical_shift_metric_count: number;
+    historical_shift_metrics: string[];
+    latest_analysis: TelemetryPayload["analysis"] | null;
+    interpretation_note: string;
+  };
+  metrics: Array<{
+    name: string;
+    label: string;
+    unit: string;
+    category: string;
+    latest_value: number | null;
+    latest_quality: string;
+    sample_count: number;
+    baseline_sample_count: number;
+    reference_median: number | null;
+    reference_mad: number | null;
+    delta_from_reference: number | null;
+    change_fraction: number | null;
+    robust_deviation: number | null;
+    recent_median: number | null;
+    recent_window_delta: number | null;
+    trend_direction: string;
+    status: "data_quality" | "context" | "insufficient_history" | "shift" | "within_observed_range";
+    history: Array<{
+      event_id: string;
+      measured_at: string;
+      value: number | null;
+      quality: string;
+      analysis_status: AnalysisStatus;
+    }>;
+  }>;
+  insights: Array<{
+    code: string;
+    severity: "review" | "watch" | "context" | "info";
+    title: string;
+    summary: string;
+    interaction_summary: string | null;
+    evidence: string[];
+    recommended_actions: string[];
+    event_id: string | null;
+    metric_names: string[];
+    interaction_labels: string[];
+  }>;
+};
+
 export type Paginated<T> = {
   count: number;
   next: string | null;
@@ -184,6 +252,12 @@ export const missionApi = {
   series: (token: string, profileId: string, feature: string) =>
     request<Series>(
       `/api/v1/profiles/${encodeURIComponent(profileId)}/series/?feature=${encodeURIComponent(feature)}&limit=48`,
+      token,
+    ),
+
+  report: (token: string, profileId: string) =>
+    request<ProfileReport>(
+      `/api/v1/profiles/${encodeURIComponent(profileId)}/insights/?limit=120`,
       token,
     ),
 

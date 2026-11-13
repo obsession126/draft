@@ -242,6 +242,69 @@ class MissionApiTests(APITestCase):
         self.assertEqual(resolved.status_code, 200)
         self.assertEqual(resolved.data["status"], "resolved")
 
+    def test_profile_report_explains_all_features_and_nonlinear_patterns(self):
+        for index in range(20, 28):
+            event = self.event(index)
+            response = self.client.post(
+                "/api/v1/telemetry/ingest/",
+                {"event": event},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 201)
+
+        interaction = self.event(32, "interaction_shift")
+        response = self.client.post(
+            "/api/v1/telemetry/ingest/",
+            {"event": interaction},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+
+        report_response = self.client.get("/api/v1/profiles/crew-01/insights/")
+
+        self.assertEqual(report_response.status_code, 200)
+        report = report_response.data
+        self.assertEqual(
+            [metric["name"] for metric in report["metrics"]],
+            list(FEATURE_NAMES),
+        )
+        heart_rate = next(
+            metric for metric in report["metrics"] if metric["name"] == "hr_bpm"
+        )
+        self.assertGreaterEqual(heart_rate["baseline_sample_count"], 5)
+        self.assertEqual(heart_rate["latest_value"], interaction["measurements"]["hr_bpm"]["value"])
+        self.assertGreaterEqual(len(heart_rate["history"]), 8)
+        nonlinear_insight = next(
+            insight
+            for insight in report["insights"]
+            if insight["code"] == "nonlinear_pattern_review"
+        )
+        self.assertIn("hr_bpm", nonlinear_insight["metric_names"])
+        self.assertTrue(nonlinear_insight["interaction_labels"])
+        self.assertTrue(nonlinear_insight["interaction_summary"])
+        self.assertIn("does not establish cause", nonlinear_insight["interaction_summary"])
+        self.assertTrue(nonlinear_insight["evidence"])
+        self.assertTrue(nonlinear_insight["recommended_actions"])
+        self.assertIn("not a probability", " ".join(nonlinear_insight["evidence"]))
+        self.assertTrue(
+            all("interaction_summary" in insight for insight in report["insights"])
+        )
+
+    def test_profile_report_is_owner_scoped_and_handles_empty_history(self):
+        empty_report = self.client.get("/api/v1/profiles/crew-01/insights/")
+        self.assertEqual(empty_report.status_code, 200)
+        self.assertEqual(empty_report.data["window"]["sample_count"], 0)
+        self.assertEqual(
+            empty_report.data["insights"][0]["code"],
+            "waiting_for_telemetry",
+        )
+        self.assertIsNone(empty_report.data["insights"][0]["interaction_summary"])
+
+        other_user = get_user_model().objects.get(username="other")
+        self.client.force_authenticate(user=other_user)
+        forbidden = self.client.get("/api/v1/profiles/crew-01/insights/")
+        self.assertEqual(forbidden.status_code, 403)
+
     def test_authenticated_stream_emits_canonical_events_and_resumes(self):
         first = self.event(13)
         second = self.event(14, "interaction_shift")

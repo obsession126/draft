@@ -204,3 +204,88 @@ class SeriesResponseSerializer(serializers.Serializer):
     feature = FeatureSerializer()
     points = SeriesPointSerializer(many=True)
     count = serializers.IntegerField()
+
+
+class ReportProfileSerializer(serializers.Serializer):
+    profile_id = serializers.CharField()
+    display_name = serializers.CharField()
+    mission_name = serializers.CharField()
+    mission_phase = serializers.CharField()
+
+
+class ReportWindowSerializer(serializers.Serializer):
+    sample_count = serializers.IntegerField()
+    recent_sample_count = serializers.IntegerField()
+    baseline_sample_count = serializers.IntegerField()
+    first_measured_at = serializers.DateTimeField(allow_null=True)
+    last_measured_at = serializers.DateTimeField(allow_null=True)
+    baseline_source = serializers.CharField()
+    baseline_method = serializers.CharField()
+    baseline_ready_metric_count = serializers.IntegerField()
+    baseline_minimum_samples = serializers.IntegerField()
+    is_synthetic = serializers.BooleanField()
+
+
+class ReportSummarySerializer(serializers.Serializer):
+    latest_analysis_status = serializers.CharField(allow_null=True)
+    recent_event_count = serializers.IntegerField()
+    recent_anomaly_review_count = serializers.IntegerField()
+    recent_data_quality_review_count = serializers.IntegerField()
+    recent_insufficient_data_count = serializers.IntegerField()
+    current_quality_issue_count = serializers.IntegerField()
+    historical_shift_metric_count = serializers.IntegerField()
+    historical_shift_metrics = serializers.ListField(child=serializers.CharField())
+    latest_analysis = serializers.JSONField(allow_null=True)
+    interpretation_note = serializers.CharField()
+
+
+class MetricHistoryPointSerializer(serializers.Serializer):
+    event_id = serializers.CharField()
+    measured_at = serializers.DateTimeField()
+    value = serializers.FloatField(allow_null=True)
+    quality = serializers.CharField()
+    analysis_status = serializers.CharField()
+
+
+class MetricReportSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    label = serializers.CharField()
+    unit = serializers.CharField()
+    category = serializers.CharField()
+    latest_value = serializers.FloatField(allow_null=True)
+    latest_quality = serializers.CharField()
+    sample_count = serializers.IntegerField()
+    baseline_sample_count = serializers.IntegerField()
+    reference_median = serializers.FloatField(allow_null=True)
+    reference_mad = serializers.FloatField(allow_null=True)
+    delta_from_reference = serializers.FloatField(allow_null=True)
+    change_fraction = serializers.FloatField(allow_null=True)
+    robust_deviation = serializers.FloatField(allow_null=True)
+    recent_median = serializers.FloatField(allow_null=True)
+    recent_window_delta = serializers.FloatField(allow_null=True)
+    trend_direction = serializers.CharField()
+    status = serializers.CharField()
+    history = MetricHistoryPointSerializer(many=True)
+
+
+class ReportInsightSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    severity = serializers.ChoiceField(choices=("review", "watch", "context", "info"))
+    title = serializers.CharField()
+    summary = serializers.CharField()
+    interaction_summary = serializers.CharField(allow_null=True)
+    evidence = serializers.ListField(child=serializers.CharField())
+    recommended_actions = serializers.ListField(child=serializers.CharField())
+    event_id = serializers.CharField(allow_null=True)
+    metric_names = serializers.ListField(child=serializers.CharField())
+    interaction_labels = serializers.ListField(child=serializers.CharField())
+
+
+class ProfileReportSerializer(serializers.Serializer):
+    schema_version = serializers.CharField()
+    profile = ReportProfileSerializer()
+    generated_at = serializers.DateTimeField()
+    window = ReportWindowSerializer()
+    summary = ReportSummarySerializer()
+    metrics = MetricReportSerializer(many=True)
+    insights = ReportInsightSerializer(many=True)

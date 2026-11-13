@@ -7,11 +7,11 @@ import {
   Dashboard,
   Feature,
   missionApi,
+  ProfileReport,
 } from "@/lib/api";
 
 type EventRecord = NonNullable<Dashboard["latest"]>;
 
-const FEATURE_SHORTLIST = ["hr_bpm", "hrv_ms", "spo2_percent", "sleep_duration_min"];
 const AUTH_EVENT = "mission-auth-change";
 
 function subscribeToToken(onChange: () => void) {
@@ -66,36 +66,35 @@ function TrendChart({
   color: string;
   label: string;
 }) {
-  const points = values.filter((value): value is number => value != null);
-  if (points.length < 2) {
+  const validCount = values.filter((value): value is number => value != null).length;
+  if (validCount < 2) {
     return <div className="chart-empty">Waiting for more measurements</div>;
   }
+  const points = values.filter((value): value is number => value != null);
   const min = Math.min(...points);
   const max = Math.max(...points);
   const spread = max - min || 1;
-  const coordinates = points.map((value, index) => {
-    const x = (index / (points.length - 1)) * 100;
+  const segments: string[][] = [];
+  values.forEach((value, index) => {
+    if (value == null) return;
+    const x = values.length <= 1 ? 0 : (index / (values.length - 1)) * 100;
     const y = 44 - ((value - min) / spread) * 34;
-    return `${x},${y}`;
+    const current = segments[segments.length - 1];
+    if (!current || values[index - 1] == null) segments.push([`${x},${y}`]);
+    else current.push(`${x},${y}`);
   });
-  const areaPath = `M ${coordinates[0]} L ${coordinates.slice(1).join(" L ")} L 100,52 L 0,52 Z`;
 
   return (
-    <div className="chart-wrap" role="img" aria-label={`${label} trend, ${points.length} measurements`}>
+    <div className="chart-wrap" role="img" aria-label={`${label} trend, ${validCount} valid measurements`}>
       <div className="chart-scale">
         <span>{formatValue(max)}</span>
         <span>{formatValue(min)}</span>
       </div>
       <svg viewBox="0 0 100 56" preserveAspectRatio="none" className="trend-chart">
-        <defs>
-          <linearGradient id="trend-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity=".22" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
         <path d="M 0,10 H 100 M 0,27 H 100 M 0,44 H 100" className="chart-grid" />
-        <path d={areaPath} fill="url(#trend-fill)" />
-        <polyline points={coordinates.join(" ")} fill="none" stroke={color} strokeWidth="1.25" vectorEffect="non-scaling-stroke" />
+        {segments.map((segment, index) => segment.length > 1 && (
+          <polyline key={index} points={segment.join(" ")} fill="none" stroke={color} strokeWidth="1.25" vectorEffect="non-scaling-stroke" />
+        ))}
       </svg>
       <div className="chart-axis">
         <span>Oldest</span>
@@ -132,6 +131,63 @@ function MetricCard({
         <span>{measurement?.unit ?? "—"}</span>
       </div>
       <p className="metric-time">Updated {formatTime(timestamp)}</p>
+    </article>
+  );
+}
+
+function MiniTrend({ values }: { values: Array<number | null> }) {
+  const points = values.filter((value): value is number => value != null);
+  if (points.length < 2) return <div className="mini-trend-empty">Collecting history</div>;
+  const min = Math.min(...points);
+  const range = Math.max(...points) - min || 1;
+  const polyline = points
+    .map((value, index) => {
+      const x = (index / (points.length - 1)) * 100;
+      const y = 27 - ((value - min) / range) * 21;
+      return `${x},${y}`;
+    })
+    .join(" ");
+  return (
+    <svg className="mini-trend" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function InsightCard({
+  insight,
+  featureLabels,
+}: {
+  insight: ProfileReport["insights"][number];
+  featureLabels: Map<string, string>;
+}) {
+  return (
+    <article className={`insight-card insight-${insight.severity}`}>
+      <div className="insight-card-top">
+        <span className="insight-severity">{insight.severity === "review" ? "REVIEW" : insight.severity === "watch" ? "OBSERVED SHIFT" : insight.severity === "context" ? "MISSION CONTEXT" : "INFORMATION"}</span>
+        {insight.event_id && <span className="insight-event">{insight.event_id}</span>}
+      </div>
+      <h3>{insight.title}</h3>
+      <p className="insight-summary">{insight.summary}</p>
+      {insight.interaction_summary && <p className="interaction-summary">{insight.interaction_summary}</p>}
+      {insight.metric_names.length > 0 && (
+        <div className="insight-signals">
+          {insight.metric_names.map((name) => <span key={name}>{featureLabels.get(name) ?? name.replaceAll("_", " ")}</span>)}
+        </div>
+      )}
+      {insight.interaction_labels.length > 0 && (
+        <div className="interaction-block">
+          <span className="mini-label">MODEL-IDENTIFIED RELATIONSHIPS</span>
+          {insight.interaction_labels.slice(0, 3).map((label) => <span className="interaction-label" key={label}>{label.replaceAll("_", " ")}</span>)}
+        </div>
+      )}
+      <details className="insight-details">
+        <summary>Evidence & suggested checks <span>{insight.evidence.length + insight.recommended_actions.length} items</span></summary>
+        <div className="insight-detail-columns">
+          <div><strong>Observed evidence</strong><ul>{insight.evidence.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></div>
+          <div><strong>Suggested next steps</strong><ul>{insight.recommended_actions.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></div>
+        </div>
+      </details>
     </article>
   );
 }
@@ -201,7 +257,7 @@ export default function Home() {
   const [profiles, setProfiles] = useState<CrewProfile[]>([]);
   const [profileId, setProfileId] = useState("");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
-  const [seriesValues, setSeriesValues] = useState<Array<number | null>>([]);
+  const [report, setReport] = useState<ProfileReport | null>(null);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertCount, setAlertCount] = useState(0);
@@ -213,6 +269,8 @@ export default function Home() {
   const [eventHasNext, setEventHasNext] = useState(false);
   const [features, setFeatures] = useState<Feature[]>([]);
   const [selectedFeature, setSelectedFeature] = useState("hr_bpm");
+  const [metricCategory, setMetricCategory] = useState("all");
+  const [metricSearch, setMetricSearch] = useState("");
   const [showProfileForm, setShowProfileForm] = useState(false);
 
   const loadProfiles = useCallback(async (activeToken: string) => {
@@ -233,15 +291,15 @@ export default function Home() {
   const refresh = useCallback(async () => {
     if (!token || !profileId) return;
     try {
-      const [nextDashboard, nextSeries, nextEvents, nextAlerts, openAlerts] = await Promise.all([
+      const [nextDashboard, nextReport, nextEvents, nextAlerts, openAlerts] = await Promise.all([
         missionApi.dashboard(token, profileId),
-        missionApi.series(token, profileId, selectedFeature),
+        missionApi.report(token, profileId),
         missionApi.events(token, profileId, eventPage),
         missionApi.alerts(token, profileId, alertPage),
         missionApi.alerts(token, profileId, 1, "open"),
       ]);
       setDashboard(nextDashboard);
-      setSeriesValues(nextSeries.points.map((point) => point.value));
+      setReport(nextReport);
       setEvents(nextEvents.results.filter((event): event is EventRecord => event !== null));
       setAlerts(nextAlerts.results);
       setAlertCount(openAlerts.count);
@@ -253,7 +311,7 @@ export default function Home() {
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Could not refresh mission data.");
     }
-  }, [alertPage, eventPage, profileId, selectedFeature, token]);
+  }, [alertPage, eventPage, profileId, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -292,8 +350,26 @@ export default function Home() {
 
   const latestPayload = dashboard?.latest?.payload;
   const selectedFeatureMeta = useMemo(
-    () => features.find((feature) => feature.name === selectedFeature),
-    [features, selectedFeature],
+    () => report?.metrics.find((feature) => feature.name === selectedFeature),
+    [report, selectedFeature],
+  );
+  const seriesValues = selectedFeatureMeta?.history.map((point) => point.value) ?? [];
+  const featureLabels = useMemo(
+    () => new Map(features.map((feature) => [feature.name, feature.label])),
+    [features],
+  );
+  const metricCategories = useMemo(
+    () => [...new Set((report?.metrics ?? []).map((metric) => metric.category))],
+    [report],
+  );
+  const filteredMetrics = useMemo(
+    () => (report?.metrics ?? []).filter((metric) => {
+      const matchesCategory = metricCategory === "all" || metric.category === metricCategory;
+      const query = metricSearch.trim().toLowerCase();
+      const matchesSearch = !query || `${metric.label} ${metric.name} ${metric.category}`.toLowerCase().includes(query);
+      return matchesCategory && matchesSearch;
+    }),
+    [metricCategory, metricSearch, report],
   );
   const isLoggedIn = Boolean(token);
 
@@ -354,6 +430,7 @@ export default function Home() {
     setAlertPage(1);
     setEventPage(1);
     setDashboard(null);
+    setReport(null);
     setApiError("");
   }
 
@@ -404,6 +481,7 @@ export default function Home() {
   const measurements = latestPayload?.measurements;
   const healthStatus = dashboard?.latest?.analysis_status ?? "insufficient_data";
   const statusColor = healthStatus === "normal" ? "#56d6a0" : "#ffad69";
+  const categoryLabel = (category: string) => category.replaceAll("_", " ");
 
   return (
     <main className="app-shell">
@@ -414,7 +492,7 @@ export default function Home() {
         <div className="side-label">MISSION CONTROL</div>
         <nav className="side-nav" aria-label="Main navigation">
           <a className="nav-item nav-active" href="#overview"><span>◫</span> Overview</a>
-          <a className="nav-item" href="#signals"><span>⌁</span> Signal trends</a>
+          <a className="nav-item" href="#signals"><span>⌁</span> All indicators</a>
           <a className="nav-item" href="#alerts"><span>◉</span> Alerts <b className="nav-count">{alertCount}</b></a>
           <a className="nav-item" href="#events"><span>≋</span> Event history</a>
         </nav>
@@ -488,6 +566,36 @@ export default function Home() {
             </article>
           </section>
 
+          <section className="section-block intelligence-brief" aria-labelledby="brief-heading">
+            <div className="section-heading">
+              <div><p className="eyebrow">PROFILE HISTORY · NOT A MEDICAL RISK SCORE</p><h2 id="brief-heading">Mission signal brief</h2></div>
+              <span className="section-note">
+                {report ? `${report.window.sample_count} samples · ${report.window.baseline_ready_metric_count}/36 profile references ready` : "Preparing profile history…"}
+              </span>
+            </div>
+            <div className="brief-stats">
+              <article><span>RECENT MODEL REVIEWS</span><strong>{report?.summary.recent_anomaly_review_count ?? "—"}</strong><small>within latest {report?.summary.recent_event_count ?? 0} events</small></article>
+              <article><span>CURRENT SIGNAL QUALITY</span><strong>{report?.summary.current_quality_issue_count ?? "—"}</strong><small>channels low or missing</small></article>
+              <article><span>PROFILE-HISTORY SHIFTS</span><strong>{report?.summary.historical_shift_metric_count ?? "—"}</strong><small>exploratory deviation rule</small></article>
+              <article><span>COMPARISON SOURCE</span><strong>{report?.window.baseline_sample_count ?? 0} samples</strong><small>prior normal, good-quality events</small></article>
+            </div>
+            <p className="brief-disclaimer">{report?.summary.interpretation_note ?? "Waiting for telemetry. The report will compare this profile's valid history; the model score is not a probability."}</p>
+          </section>
+
+          <section className="section-block" id="insights">
+            <div className="section-heading">
+              <div><p className="eyebrow">WHAT CHANGED · WHY · WHAT TO CHECK NEXT</p><h2>Mission intelligence <span className="heading-count">{report?.insights.length ?? 0}</span></h2></div>
+              <span className="section-note">Evidence is linked to event time, signal quality, and mission context.</span>
+            </div>
+            {report?.insights.length ? (
+              <div className="insights-grid">
+                {report.insights.map((insight) => <InsightCard key={insight.code} insight={insight} featureLabels={featureLabels} />)}
+              </div>
+            ) : (
+              <div className="panel empty-state"><span>…</span><strong>Generating the first profile-specific briefing</strong><p>Insights appear when events have been received and compared with usable history.</p></div>
+            )}
+          </section>
+
           <section className="section-block">
             <div className="section-heading">
               <div><p className="eyebrow">CURRENT READINGS</p><h2>Key health signals</h2></div>
@@ -501,12 +609,12 @@ export default function Home() {
             </div>
           </section>
 
-          <section className="section-block analytics-layout" id="signals">
+          <section className="section-block analytics-layout" id="trend-explorer">
             <article className="panel trend-panel">
               <div className="panel-heading">
                 <div><p className="eyebrow">PERSONAL SIGNAL HISTORY</p><h2>Trend explorer</h2></div>
                 <select aria-label="Select signal to chart" value={selectedFeature} onChange={(event) => setSelectedFeature(event.target.value)}>
-                  {features.filter((feature) => FEATURE_SHORTLIST.includes(feature.name) || feature.category === selectedFeatureMeta?.category).map((feature) => (
+                  {features.map((feature) => (
                     <option key={feature.name} value={feature.name}>{feature.label}</option>
                   ))}
                 </select>
@@ -516,7 +624,12 @@ export default function Home() {
                 <span>Latest · {selectedFeatureMeta?.label ?? selectedFeature}</span>
               </div>
               <TrendChart values={seriesValues} color={statusColor} label={selectedFeatureMeta?.label ?? selectedFeature} />
-              <div className="chart-disclaimer">Values are shown as received. No interpolation is applied to missing measurements.</div>
+              <div className="trend-context">
+                <span>Profile reference <b>{selectedFeatureMeta?.reference_median == null ? "building" : `${formatValue(selectedFeatureMeta.reference_median)} ${selectedFeatureMeta.unit}`}</b></span>
+                <span>Recent window <b>{selectedFeatureMeta?.trend_direction ?? "unknown"}</b></span>
+                <span>Valid samples <b>{selectedFeatureMeta?.sample_count ?? 0}</b></span>
+              </div>
+              <div className="chart-disclaimer">Gaps preserve missing/low-quality readings; the horizontal reference is this profile&apos;s prior normal-quality median, not a medical target.</div>
             </article>
 
             <article className="panel analysis-panel">
@@ -548,7 +661,63 @@ export default function Home() {
                   })}
                 </div>
               )}
+              {latestPayload && (
+                <div className="analysis-context">
+                  <span className="mini-label">SAMPLE CONTEXT</span>
+                  <p>{latestPayload.context.simulation_scenario.replaceAll("_", " ")} · mission phase {latestPayload.context.mission_phase} · {latestPayload.is_synthetic ? "synthetic source" : "external source"}</p>
+                  <small>Analysis event {dashboard?.latest?.event_id} · measured {formatTime(dashboard?.latest?.measured_at)} · received {formatTime(dashboard?.latest?.received_at)}</small>
+                </div>
+              )}
             </article>
+          </section>
+
+          <section className="section-block" id="signals">
+            <div className="section-heading">
+              <div><p className="eyebrow">36-COMPONENT TELEMETRY VECTOR</p><h2>All monitored indicators</h2></div>
+              <span className="section-note">Profile reference is built from prior normal, good-quality samples only.</span>
+            </div>
+            <div className="metric-explorer panel">
+              <div className="metric-filters">
+                <label className="metric-search-label">
+                  <span className="sr-only">Search monitored indicators</span>
+                  <input value={metricSearch} onChange={(event) => setMetricSearch(event.target.value)} placeholder="Search signals, units, or categories" />
+                </label>
+                <div className="category-filters" aria-label="Filter indicators by category">
+                  <button className={metricCategory === "all" ? "filter-active" : ""} onClick={() => setMetricCategory("all")}>All 36</button>
+                  {metricCategories.map((category) => (
+                    <button className={metricCategory === category ? "filter-active" : ""} key={category} onClick={() => setMetricCategory(category)}>{categoryLabel(category)}</button>
+                  ))}
+                </div>
+              </div>
+              {report?.metrics.length ? (
+                <div className="all-metrics-grid">
+                  {filteredMetrics.map((metric) => (
+                    <button
+                      type="button"
+                      className={`indicator-card ${selectedFeature === metric.name ? "indicator-selected" : ""}`}
+                      key={metric.name}
+                      onClick={() => setSelectedFeature(metric.name)}
+                    >
+                      <div className="indicator-title-row"><span>{metric.label}</span><StatusMark status={metric.status} /></div>
+                      <div className="indicator-value-row"><strong>{formatValue(metric.latest_value)}</strong><small>{metric.unit}</small><span className={`quality-tag quality-${metric.latest_quality}`}>{metric.latest_quality}</span></div>
+                      <MiniTrend values={metric.history.map((point) => point.value)} />
+                      <div className="indicator-baseline">
+                        <span>Profile median</span>
+                        <b>{metric.reference_median == null ? "Building history" : `${formatValue(metric.reference_median)} ${metric.unit}`}</b>
+                      </div>
+                      <div className="indicator-baseline">
+                        <span>Vs. reference</span>
+                        <b>{metric.delta_from_reference == null ? "Not comparable" : `${metric.delta_from_reference > 0 ? "+" : ""}${formatValue(metric.delta_from_reference)} ${metric.unit}`}</b>
+                      </div>
+                      <div className="indicator-foot">{categoryLabel(metric.category)} · {metric.sample_count} valid samples{metric.robust_deviation != null ? ` · ${Math.abs(metric.robust_deviation).toFixed(1)} robust deviations` : ""}</div>
+                    </button>
+                  ))}
+                  {filteredMetrics.length === 0 && <div className="empty-table">No indicators match this filter.</div>}
+                </div>
+              ) : (
+                <div className="empty-state"><span>⌁</span><strong>Waiting for sensor channels</strong><p>All 36 indicator cards will populate from persisted telemetry.</p></div>
+              )}
+            </div>
           </section>
 
           <section className="section-block" id="alerts">
