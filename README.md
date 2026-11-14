@@ -1,6 +1,6 @@
 ﻿# 🚀 SpaceApps 2026: Astronaut Health Monitoring System
 
-> **Challenge #5:** Create Software for Monitoring Astronaut Health During Space Missions  
+> **Challenge #5:** Create Software for Monitoring Astronaut Health During Space Missions 
 > **Event:** NASA Space Apps Challenge 2026  
 
 ---
@@ -12,7 +12,7 @@ This project is an **integrated, real-time astronaut health monitoring system** 
 
 ---
 
-## 🏗 System Architecture
+## 🏗 System Architecture_
 
 The project is structured into three main isolated modules to ensure high performance and scalability:
 
