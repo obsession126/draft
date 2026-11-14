@@ -2,7 +2,7 @@ import json
 import time
 from datetime import timedelta
 
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -40,7 +40,12 @@ from api.serializers import (
     TelemetryEventInputSerializer,
     TelemetryEventSerializer,
 )
-from api.services import build_profile_report, create_sync_batch, ingest_event
+from api.services import (
+    build_profile_report,
+    build_profile_series,
+    create_sync_batch,
+    ingest_event,
+)
 
 
 class HealthView(APIView):
@@ -104,7 +109,9 @@ class TelemetryEventViewSet(
     ordering = ["-measured_at", "-event_id"]
 
     def get_queryset(self):
-        queryset = TelemetryEvent.objects.select_related("profile", "profile__owner")
+        queryset = TelemetryEvent.objects.select_related("profile", "profile__owner").filter(
+            is_archived=False
+        )
         if not self.request.user.is_staff:
             queryset = queryset.filter(profile__owner=self.request.user)
         params = self.request.query_params
@@ -207,14 +214,23 @@ class ProfileDashboardView(APIView):
     def get(self, request, profile_id):
         profile = _get_ingest_profile(profile_id)
         self.check_object_permissions(request, profile)
-        latest = profile.telemetry_events.order_by("-measured_at", "-event_id").first()
+        latest = profile.telemetry_events.filter(is_archived=False).order_by(
+            "-measured_at", "-event_id"
+        ).first()
         open_alerts = profile.alerts.filter(status=HealthAlert.Status.OPEN).select_related(
             "event"
         )[:10]
-        event_count = profile.telemetry_events.count()
+        archived_count = profile.trend_buckets.aggregate(total=Sum("event_count"))[
+            "total"
+        ] or 0
+        recent_count = profile.telemetry_events.filter(
+            aggregated_at__isnull=True
+        ).count()
+        event_count = archived_count + recent_count
+        has_archived_history = profile.trend_buckets.exists()
         last_sync_at = latest.received_at if latest else None
         if latest is None:
-            sync_status = "no_data"
+            sync_status = "stale" if has_archived_history else "no_data"
         elif timezone.now() - latest.received_at > timedelta(seconds=30):
             sync_status = "stale"
         else:
@@ -255,25 +271,13 @@ class ProfileSeriesView(APIView):
         until = _parse_query_datetime(request.query_params.get("until"), "until")
         if since and until and since > until:
             raise ValidationError({"since": "Must be earlier than or equal to until."})
-        queryset = profile.telemetry_events.all()
-        if since:
-            queryset = queryset.filter(measured_at__gte=since)
-        if until:
-            queryset = queryset.filter(measured_at__lte=until)
-        records = list(queryset.order_by("-measured_at", "-event_id")[:limit])
-        points = []
-        for record in reversed(records):
-            measurement = record.payload["measurements"][feature.name]
-            points.append(
-                {
-                    "event_id": record.event_id,
-                    "measured_at": record.measured_at,
-                    "value": measurement["value"],
-                    "unit": measurement["unit"],
-                    "quality": measurement["quality"],
-                    "analysis_status": record.analysis_status,
-                }
-            )
+        points = build_profile_series(
+            profile,
+            feature,
+            limit=limit,
+            since=since,
+            until=until,
+        )
         return Response(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -410,7 +414,9 @@ class TelemetryStreamView(APIView):
             cursor = last_event_id
             try:
                 while True:
-                    queryset = profile.telemetry_events.order_by("received_at", "event_id")
+                    queryset = profile.telemetry_events.filter(is_archived=False).order_by(
+                        "received_at", "event_id"
+                    )
                     if cursor:
                         previous = profile.telemetry_events.filter(event_id=cursor).first()
                         if previous is None:

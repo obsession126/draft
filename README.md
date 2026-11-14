@@ -14,19 +14,22 @@ This project is an **integrated, real-time astronaut health monitoring system** 
 
 ## 🏗 System Architecture_
 
-The project is structured into three main isolated modules to ensure high performance and scalability:
+The project is structured into independent modules to ensure clear boundaries and scalable development:
 
 ```text
  spaceapps-health-monitor/
  ├── 🎨 frontend/      # User Interface & Real-Time Dashboards
  ├── ⚙️ backend/       # Core Business Logic, Storage & API Gateway
  ├── 📊 analytics/     # Telemetry Processing & Anomaly Detection Pipeline
+ ├── 📄 report/        # Synthetic-scenario report API and Gemini integration
  └── 📄 docs/          # Project Documentation & Pitch Presentation
 ```
 
 ## Roadmap
 
 The shared, module-by-module development plan, checkpoints, and acceptance criteria are in [docs/ROADMAP.md](./docs/ROADMAP.md).
+
+The presentation brief, product comparison, strengths, architecture, demo flow, and limitations are in [docs/PRESENTATION_REPORT_UK.md](./docs/PRESENTATION_REPORT_UK.md).
 
 ## Analytics demo
 
@@ -35,3 +38,5 @@ The synthetic telemetry simulator, nonlinear anomaly detector, JSON contract, an
 The Django REST Framework backend setup, authentication, API contract, and analytics bridge are documented in [backend/README.md](./backend/README.md).
 
 The Next.js dashboard setup and end-to-end simulator workflow are documented in [frontend/my-hub/README.md](./frontend/my-hub/README.md).
+
+The separate synthetic-scenario report service, Gemini configuration, and API are documented in [report/README.md](./report/README.md).

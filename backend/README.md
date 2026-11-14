@@ -4,6 +4,8 @@ The backend persists telemetry from the synthetic analytics module and exposes a
 
 This is a hackathon/demo backend, not a medical device or production deployment. Telemetry and anomaly labels are synthetic and must not be used for clinical decisions.
 
+On macOS, the XGBoost wheel also requires an OpenMP runtime. Install it once with `brew install libomp` before starting Django. Linux/Windows deployments need the matching native runtime for their platform if XGBoost reports that OpenMP cannot be loaded.
+
 ## Local setup (Windows PowerShell)
 
 Run these commands from the repository root:
@@ -81,6 +83,16 @@ This runs the analytics simulator and nonlinear detector, then validates and per
 
 `bridge_analytics` remains available for running the analytics HTTP/SSE service as a separate process and forwarding its events over the authenticated DRF API. It is not required for the standard local demo flow.
 
+### Minute aggregation and raw-data retention
+
+Run the following command at least once per minute using a local scheduler. On macOS, use `backend/.venv/bin/python backend/manage.py compact_telemetry` instead of the PowerShell path below.
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend\manage.py compact_telemetry
+```
+
+It rolls completed minutes into per-profile summaries (good-value mean/min/max, quality counts, category counts, and mission-context summaries). Raw measurement payloads are retained for seven days from `measured_at`, then redacted only after aggregation has succeeded; a digest and small event metadata remain to preserve idempotency. Events linked to alerts are aggregated for trend analysis but their original payloads and alert evidence are preserved. The command is safe to rerun; it only processes unaggregated events. Scheduling is not bundled into the demo server, so without the scheduled command neither compaction nor raw-payload retention is enforced.
+
 ## API contract
 
 All JSON timestamps are ISO-8601 with timezone information. Analytics payloads preserve their original `schema_version`, 36-feature `feature_names` and `feature_vector`, named `measurements`, mission `context`, and `analysis` result. Ingest rejects events that fail the shared JSON Schema or whose vector does not match `measurements[name].value`.
@@ -108,15 +120,19 @@ All JSON timestamps are ISO-8601 with timezone information. Analytics payloads p
 
 The SSE endpoint requires an Authorization header; native browser `EventSource` cannot set one. A browser client should use `fetch()` with the token header and read the response stream, or use an authenticated same-origin proxy. Do not weaken API authentication by putting the token in a query parameter.
 
+The event-history endpoint returns full raw events still within the retention window and alert-linked evidence; archived payloads are omitted. The series and insights endpoints include minute aggregates so profile trends remain available after raw-payload redaction.
+
 The ingest response includes `event_id`, `profile_id`, `created`, `duplicate`, `analysis_status`, `received_at`, and `schema_version`. Batch responses include `batch_id`, `event_ids`, `created_count`, `duplicate_count`, `created_at`, `schema_version`, and `idempotent_replay`. Alert states are `open`, `acknowledged`, and `resolved`.
 
-The profile insights response includes `schema_version`, profile metadata, report window, summary, ordered `metrics`, and `insights`. Each metric includes its latest quality/value, personal reference statistics, status, and up to 48 historical points. An insight includes `code`, `severity`, `title`, `summary`, optional `interaction_summary`, evidence, recommended checks, contributing metric names, and model relationship labels. Frontend clients should treat this endpoint as the source for explanatory report content rather than reconstructing explanations from anomaly scores.
+The profile insights response includes `schema_version`, profile metadata, report window, summary, ordered `metrics`, and `insights`. Each metric includes its latest quality/value, personal reference statistics, status, up to 48 historical points, and a `trend_model` result. Older history points are one-minute aggregates; each reports its sample count and observed minimum/maximum. The XGBoost result reports model/version status, usable history count, forecast horizon/value, robust trend direction, selected mission-context features, and (for numeric channels) median absolute error on a chronological holdout. Forecasts are one sample ahead, require at least 36 good-quality observations, and are not medical predictions. An insight includes `code`, `severity`, `title`, `summary`, optional `interaction_summary`, evidence, recommended checks, contributing metric names, and model relationship labels. Frontend clients should treat this endpoint as the source for explanatory report content rather than reconstructing explanations from anomaly scores.
 
-The personal comparison uses the profile's earlier normal, good-quality samples (median and median absolute deviation); it is an exploratory change indicator, not a medical threshold. The detector's empirical tail rank is not a probability. Model feature contributions identify patterns the model used, not causal relationships. Synthetic values and scenario labels must remain visibly identified as synthetic.
+The personal comparison uses earlier normal, good-quality raw samples and minute-aggregate means (median and median absolute deviation); aggregate buckets enter the baseline only when all their events had a normal event-level status. It is an exploratory change indicator, not a medical threshold. The detector's empirical tail rank is not a probability. Model feature contributions identify patterns the model used, not causal relationships. Synthetic values and scenario labels must remain visibly identified as synthetic.
 
 ## Demo limitations
 
 - SQLite is suitable for the local demo, not concurrent high-volume production ingestion.
 - DRF token authentication provides a simple integration boundary; production deployment needs a deliberate identity, token rotation, TLS, backups, retention, and operational monitoring plan.
 - Analysis results express deviations from a synthetic baseline only; they are not medical diagnoses or validated recommendations.
+- Raw events are stored with their full payload in SQLite until the scheduled compaction command runs. The agreed demo policy stores per-minute trend aggregates, retains unlinked raw event payloads for seven days, and preserves alert-linked raw evidence. Configure and monitor the scheduler before sustained ingestion; without it neither compaction nor raw-payload redaction occurs.
+- Profile XGBoost estimators are fitted when the insights endpoint computes a report; the final chronological portion is held out for error estimation, and the same fitted estimator forecasts one sample ahead. Runtime and error metrics have not been benchmarked on real mission data.
 - The standalone analytics HTTP service keeps a bounded in-memory history; the integrated mission simulator persists events directly to the backend database.

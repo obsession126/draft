@@ -195,7 +195,11 @@ class SeriesPointSerializer(serializers.Serializer):
     value = serializers.FloatField(allow_null=True)
     unit = serializers.CharField()
     quality = serializers.CharField()
-    analysis_status = serializers.CharField()
+    analysis_status = serializers.CharField(allow_null=True)
+    source_type = serializers.ChoiceField(choices=("event", "minute_aggregate"))
+    sample_count = serializers.IntegerField()
+    minimum_value = serializers.FloatField(allow_null=True)
+    maximum_value = serializers.FloatField(allow_null=True)
 
 
 class SeriesResponseSerializer(serializers.Serializer):
@@ -235,6 +239,9 @@ class ReportSummarySerializer(serializers.Serializer):
     current_quality_issue_count = serializers.IntegerField()
     historical_shift_metric_count = serializers.IntegerField()
     historical_shift_metrics = serializers.ListField(child=serializers.CharField())
+    trend_model_version = serializers.CharField()
+    trend_model_ready_metric_count = serializers.IntegerField()
+    trend_model_building_metric_count = serializers.IntegerField()
     latest_analysis = serializers.JSONField(allow_null=True)
     interpretation_note = serializers.CharField()
 
@@ -244,7 +251,11 @@ class MetricHistoryPointSerializer(serializers.Serializer):
     measured_at = serializers.DateTimeField()
     value = serializers.FloatField(allow_null=True)
     quality = serializers.CharField()
-    analysis_status = serializers.CharField()
+    analysis_status = serializers.CharField(allow_null=True)
+    source_type = serializers.ChoiceField(choices=("event", "minute_aggregate"))
+    sample_count = serializers.IntegerField()
+    minimum_value = serializers.FloatField(allow_null=True)
+    maximum_value = serializers.FloatField(allow_null=True)
 
 
 class MetricReportSerializer(serializers.Serializer):
@@ -264,6 +275,7 @@ class MetricReportSerializer(serializers.Serializer):
     recent_median = serializers.FloatField(allow_null=True)
     recent_window_delta = serializers.FloatField(allow_null=True)
     trend_direction = serializers.CharField()
+    trend_model = serializers.JSONField()
     status = serializers.CharField()
     history = MetricHistoryPointSerializer(many=True)
 

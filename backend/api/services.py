@@ -3,16 +3,31 @@ import json
 import math
 import statistics
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.db import IntegrityError, transaction
+from django.db.models import Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import APIException
 
 from analytics.contracts import FEATURE_BY_NAME, FEATURES, SCHEMA_VERSION
-from api.models import CrewProfile, HealthAlert, SyncBatch, TelemetryEvent
+from analytics.trend_forecaster import MODEL_VERSION, forecast_feature
+from api.models import (
+    CrewProfile,
+    HealthAlert,
+    SyncBatch,
+    TelemetryEvent,
+    TelemetryTrendBucket,
+)
+from api.trend_buckets import (
+    aggregate_event_payload,
+    merge_aggregate_stats,
+    metric_value,
+    model_context,
+)
 
 
 class EventConflict(APIException):
@@ -31,6 +46,7 @@ REPORT_RECENT_WINDOW = 12
 REPORT_MIN_BASELINE_SAMPLES = 5
 REPORT_SHIFT_ROBUST_DEVIATIONS = 2.5
 REPORT_FEATURE_HISTORY_LIMIT = 48
+REPORT_TREND_MODEL_LIMIT = 2000
 REPORT_NON_NUMERIC_UNITS = {"category_code"}
 
 
@@ -71,6 +87,7 @@ def ingest_event(event):
                 link_online=link_online,
                 data_quality=analysis["data_quality"]["status"],
                 payload=event,
+                payload_digest=canonical_digest(event),
             )
     except IntegrityError:
         existing = TelemetryEvent.objects.filter(event_id=event["event_id"]).first()
@@ -140,9 +157,11 @@ def create_sync_batch(user, events, idempotency_key=None):
 
 def build_profile_report(profile, limit=120):
     records = list(
-        profile.telemetry_events.order_by("-measured_at", "-event_id")[:limit]
+        profile.telemetry_events.filter(is_archived=False)
+        .order_by("-measured_at", "-event_id")[:limit]
     )
     records.reverse()
+    trend_samples = _build_profile_trend_samples(profile)
     latest = records[-1] if records else None
     recent_window_size = min(REPORT_RECENT_WINDOW, max(1, len(records) // 4))
     recent_records = records[-recent_window_size:] if records else []
@@ -151,15 +170,45 @@ def build_profile_report(profile, limit=120):
         record
         for record in baseline_records
         if record.analysis_status == TelemetryEvent.AnalysisStatus.NORMAL
+        and record.aggregated_at is None
     ]
+    latest_trend_sample = (
+        trend_samples[FEATURES[0].name][-1]
+        if trend_samples[FEATURES[0].name]
+        else None
+    )
+    latest_record_is_current = (
+        latest is not None
+        and (
+            latest_trend_sample is None
+            or latest.aggregated_at is None
+            or latest.measured_at
+            >= latest_trend_sample["measured_at"] + timedelta(minutes=1)
+        )
+    )
 
     metrics = [
-        _build_metric_report(feature, records, recent_records, baseline_normal_records)
+        _build_metric_report(
+            feature,
+            records,
+            recent_records,
+            baseline_normal_records,
+            trend_samples[feature.name],
+        )
         for feature in FEATURES
     ]
     insights = _build_report_insights(records, metrics, baseline_normal_records)
     recent_counts = Counter(record.analysis_status for record in recent_records)
-    latest_analysis = latest.payload["analysis"] if latest else None
+    latest_analysis = (
+        latest.payload["analysis"] if latest_record_is_current else None
+    )
+    latest_analysis_status = (
+        latest.analysis_status
+        if latest_record_is_current
+        else latest_trend_sample["analysis_status"]
+        if latest_trend_sample
+        else None
+    )
     baseline_value_count = sum(
         metric["baseline_sample_count"] >= REPORT_MIN_BASELINE_SAMPLES
         for metric in metrics
@@ -171,6 +220,39 @@ def build_profile_report(profile, limit=120):
     shifted_metrics = [
         metric["name"] for metric in metrics if metric["status"] == "shift"
     ]
+    baseline_event_ids = {record.event_id for record in baseline_normal_records}
+    recent_event_ids = {record.event_id for record in recent_records}
+    baseline_sample_count = sum(
+        sample["analysis_status"] == TelemetryEvent.AnalysisStatus.NORMAL
+        and (
+            sample["source_type"] == "minute_aggregate"
+            or sample["event_id"] in baseline_event_ids
+            or sample["event_id"] not in recent_event_ids
+        )
+        for sample in trend_samples[FEATURES[0].name]
+    )
+    bucket_counts = profile.trend_buckets.aggregate(
+        event_count=Sum("event_count"),
+        synthetic_event_count=Sum("synthetic_event_count"),
+    )
+    unaggregated_events = profile.telemetry_events.filter(aggregated_at__isnull=True)
+    sample_count = (bucket_counts["event_count"] or 0) + unaggregated_events.count()
+    bucket_first = profile.trend_buckets.order_by("bucket_start").values_list(
+        "bucket_start", flat=True
+    ).first()
+    bucket_last = profile.trend_buckets.order_by("-bucket_start").values_list(
+        "bucket_start", flat=True
+    ).first()
+    first_candidates = [record.measured_at for record in records]
+    last_candidates = [record.measured_at for record in records]
+    if bucket_first is not None:
+        first_candidates.append(bucket_first)
+    if bucket_last is not None:
+        last_candidates.append(bucket_last)
+    synthetic_exists = (
+        (bucket_counts["synthetic_event_count"] or 0) > 0
+        or unaggregated_events.filter(is_synthetic=True).exists()
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -182,19 +264,19 @@ def build_profile_report(profile, limit=120):
         },
         "generated_at": timezone.now(),
         "window": {
-            "sample_count": len(records),
+            "sample_count": sample_count,
             "recent_sample_count": len(recent_records),
-            "baseline_sample_count": len(baseline_normal_records),
-            "first_measured_at": records[0].measured_at if records else None,
-            "last_measured_at": latest.measured_at if latest else None,
-            "baseline_source": "this_profile_prior_normal_quality_events",
+            "baseline_sample_count": baseline_sample_count,
+            "first_measured_at": min(first_candidates) if first_candidates else None,
+            "last_measured_at": max(last_candidates) if last_candidates else None,
+            "baseline_source": "this_profile_prior_normal_quality_events_and_minute_aggregates",
             "baseline_method": "median and median absolute deviation",
             "baseline_ready_metric_count": baseline_value_count,
             "baseline_minimum_samples": REPORT_MIN_BASELINE_SAMPLES,
-            "is_synthetic": any(record.is_synthetic for record in records),
+            "is_synthetic": synthetic_exists,
         },
         "summary": {
-            "latest_analysis_status": latest.analysis_status if latest else None,
+            "latest_analysis_status": latest_analysis_status,
             "recent_event_count": len(recent_records),
             "recent_anomaly_review_count": recent_counts[
                 TelemetryEvent.AnalysisStatus.ANOMALY_REVIEW
@@ -208,11 +290,19 @@ def build_profile_report(profile, limit=120):
             "current_quality_issue_count": current_quality_issue_count,
             "historical_shift_metric_count": len(shifted_metrics),
             "historical_shift_metrics": shifted_metrics,
+            "trend_model_version": MODEL_VERSION,
+            "trend_model_ready_metric_count": sum(
+                metric["trend_model"]["status"] == "ready" for metric in metrics
+            ),
+            "trend_model_building_metric_count": sum(
+                metric["trend_model"]["status"] == "building_history"
+                for metric in metrics
+            ),
             "latest_analysis": latest_analysis,
             "interpretation_note": (
-                "This report describes patterns in synthetic telemetry. Statistical "
-                "deviations and detector flags are not health probabilities, diagnoses, "
-                "or medically validated thresholds."
+                "This report includes exploratory per-feature trend forecasts and "
+                "observed changes. They are not health probabilities, diagnoses, or "
+                "medically validated thresholds."
             ),
         },
         "metrics": metrics,
@@ -220,44 +310,90 @@ def build_profile_report(profile, limit=120):
     }
 
 
-def _build_metric_report(feature, records, recent_records, baseline_records):
-    history = []
+def build_profile_series(profile, feature, *, limit, since=None, until=None):
+    samples = _build_profile_trend_samples(
+        profile,
+        limit=limit,
+        since=since,
+        until=until,
+    )[feature.name]
+    return [
+        {
+            "event_id": sample["event_id"],
+            "measured_at": sample["measured_at"],
+            "value": sample["value"],
+            "unit": feature.unit,
+            "quality": sample["quality"],
+            "analysis_status": sample["analysis_status"],
+            "source_type": sample["source_type"],
+            "sample_count": sample["sample_count"],
+            "minimum_value": sample["minimum_value"],
+            "maximum_value": sample["maximum_value"],
+        }
+        for sample in samples[-limit:]
+    ]
+
+
+def _build_metric_report(
+    feature, records, recent_records, baseline_records, trend_samples
+):
+    history = [
+        {
+            "event_id": sample["event_id"],
+            "measured_at": sample["measured_at"],
+            "value": sample["value"],
+            "quality": sample["quality"],
+            "analysis_status": sample["analysis_status"],
+            "source_type": sample["source_type"],
+            "sample_count": sample["sample_count"],
+            "minimum_value": sample["minimum_value"],
+            "maximum_value": sample["maximum_value"],
+        }
+        for sample in trend_samples[-REPORT_FEATURE_HISTORY_LIMIT:]
+    ]
     usable_values = []
+    usable_contexts = []
     baseline_values = []
     recent_values = []
     latest_quality = "missing"
     latest_value = None
+    baseline_event_ids = {record.event_id for record in baseline_records}
+    recent_event_ids = {record.event_id for record in recent_records}
 
-    for record in records[-REPORT_FEATURE_HISTORY_LIMIT:]:
-        measurement = record.payload["measurements"][feature.name]
-        value = measurement["value"]
-        quality = measurement["quality"]
-        history.append(
-            {
-                "event_id": record.event_id,
-                "measured_at": record.measured_at,
-                "value": value,
-                "quality": quality,
-                "analysis_status": record.analysis_status,
-            }
-        )
-        if value is not None and quality == "good" and _is_finite_number(value):
+    for sample in trend_samples:
+        value = sample["value"]
+        if value is not None and sample["quality"] in {"good", "aggregated"}:
             usable_values.append(float(value))
-
-    if records:
-        latest_measurement = records[-1].payload["measurements"][feature.name]
-        latest_value = latest_measurement["value"]
-        latest_quality = latest_measurement["quality"]
-
-    for record in baseline_records:
-        measurement = record.payload["measurements"][feature.name]
-        value = measurement["value"]
+            usable_contexts.append(sample["context"])
         if (
-            value is not None
-            and measurement["quality"] == "good"
-            and _is_finite_number(value)
+            sample["analysis_status"] == TelemetryEvent.AnalysisStatus.NORMAL
+            and value is not None
+            and sample["quality"] in {"good", "aggregated"}
+            and (
+                sample["source_type"] == "minute_aggregate"
+                or sample["event_id"] in baseline_event_ids
+                or sample["event_id"] not in recent_event_ids
+            )
         ):
             baseline_values.append(float(value))
+
+    latest_sample = trend_samples[-1] if trend_samples else None
+    latest_record_selected = False
+    if records:
+        latest_record = records[-1]
+        if (
+            latest_sample is None
+            or latest_record.aggregated_at is None
+            or latest_record.measured_at
+            >= latest_sample["measured_at"] + timedelta(minutes=1)
+        ):
+            latest_measurement = latest_record.payload["measurements"][feature.name]
+            latest_value = latest_measurement["value"]
+            latest_quality = latest_measurement["quality"]
+            latest_record_selected = True
+    if not latest_record_selected and latest_sample is not None:
+        latest_value = latest_sample["value"]
+        latest_quality = latest_sample["quality"]
 
     for record in recent_records:
         measurement = record.payload["measurements"][feature.name]
@@ -290,7 +426,7 @@ def _build_metric_report(feature, records, recent_records, baseline_records):
 
     if (
         latest_value is not None
-        and latest_quality == "good"
+        and latest_quality in {"good", "aggregated"}
         and _is_finite_number(latest_value)
         and reference_median is not None
     ):
@@ -302,6 +438,12 @@ def _build_metric_report(feature, records, recent_records, baseline_records):
 
     enough_baseline = len(baseline_values) >= REPORT_MIN_BASELINE_SAMPLES
     is_numeric = feature.unit not in REPORT_NON_NUMERIC_UNITS
+    trend_model = forecast_feature(
+        usable_values,
+        unit=feature.unit,
+        feature_name=feature.name,
+        contexts=usable_contexts,
+    )
     if latest_quality in {"low", "missing"}:
         metric_status = "data_quality"
     elif not is_numeric:
@@ -313,7 +455,9 @@ def _build_metric_report(feature, records, recent_records, baseline_records):
     else:
         metric_status = "within_observed_range"
 
-    if trend_delta is None or not is_numeric or not enough_baseline:
+    if trend_model["status"] == "ready":
+        trend_direction = trend_model["direction"]
+    elif trend_delta is None or not is_numeric or not enough_baseline:
         trend_direction = "unknown"
     elif robust_scale and robust_scale > 0:
         normalized_trend = trend_delta / robust_scale
@@ -343,13 +487,135 @@ def _build_metric_report(feature, records, recent_records, baseline_records):
         "recent_median": recent_median,
         "recent_window_delta": trend_delta,
         "trend_direction": trend_direction,
+        "trend_model": trend_model,
         "status": metric_status,
         "history": history,
     }
 
 
+def _build_profile_trend_samples(
+    profile, *, limit=REPORT_TREND_MODEL_LIMIT, since=None, until=None
+):
+    bucket_query = profile.trend_buckets.all()
+    raw_query = profile.telemetry_events.filter(aggregated_at__isnull=True)
+    if since is not None:
+        bucket_query = bucket_query.filter(bucket_start__gte=since)
+        raw_query = raw_query.filter(measured_at__gte=since)
+    if until is not None:
+        bucket_query = bucket_query.filter(bucket_start__lte=until)
+        raw_query = raw_query.filter(measured_at__lte=until)
+    buckets = list(bucket_query.order_by("-bucket_start")[:limit])
+    buckets.reverse()
+    raw_events = list(raw_query.order_by("-measured_at", "-event_id")[:limit])
+    raw_events.reverse()
+
+    rows_by_minute = {}
+    if buckets:
+        for bucket in buckets:
+            rows_by_minute[bucket.bucket_start] = {
+                "event_count": bucket.event_count,
+                "metrics": deepcopy(bucket.metrics),
+                "context_stats": deepcopy(bucket.context_stats),
+                "analysis_status_counts": deepcopy(bucket.analysis_status_counts),
+                "source_counts": deepcopy(bucket.source_counts),
+                "synthetic_event_count": bucket.synthetic_event_count,
+            }
+        for event in raw_events:
+            bucket_start = event.measured_at.replace(second=0, microsecond=0)
+            incoming = aggregate_event_payload(event.payload)
+            current = rows_by_minute.get(bucket_start)
+            if current is None:
+                rows_by_minute[bucket_start] = incoming
+            else:
+                merge_aggregate_stats(current, incoming)
+        rows = [
+            (
+                bucket_start,
+                stats,
+                f"minute:{bucket_start.isoformat()}",
+                "minute_aggregate",
+                None,
+            )
+            for bucket_start, stats in sorted(rows_by_minute.items())
+        ]
+    else:
+        rows = [
+            (
+                event.measured_at,
+                aggregate_event_payload(event.payload),
+                event.event_id,
+                "event",
+                event.analysis_status,
+            )
+            for event in raw_events
+        ]
+
+    result = {feature.name: [] for feature in FEATURES}
+    for measured_at, stats, event_id, source_type, analysis_status in rows:
+        context = model_context(stats["context_stats"])
+        statuses = stats["analysis_status_counts"]
+        only_normal = (
+            len(statuses) == 1
+            and statuses.get(TelemetryEvent.AnalysisStatus.NORMAL, 0)
+            == stats["event_count"]
+        )
+        for feature in FEATURES:
+            metric = stats["metrics"].get(feature.name)
+            good_count = metric["good_count"] if metric else 0
+            low_count = metric["low_count"] if metric else 0
+            value = metric_value(metric, feature.unit)
+            quality = (
+                "aggregated"
+                if source_type == "minute_aggregate" and good_count
+                else "good"
+                if good_count
+                else "low"
+                if low_count
+                else "missing"
+            )
+            result[feature.name].append(
+                {
+                    "event_id": event_id,
+                    "measured_at": measured_at,
+                    "value": value,
+                    "quality": quality,
+                    "analysis_status": (
+                        analysis_status
+                        if analysis_status is not None
+                        else TelemetryEvent.AnalysisStatus.NORMAL
+                        if only_normal
+                        else None
+                    ),
+                    "source_type": source_type,
+                    "sample_count": good_count,
+                    "minimum_value": metric["min"] if metric else None,
+                    "maximum_value": metric["max"] if metric else None,
+                    "context": context,
+                }
+            )
+    return result
+
+
 def _build_report_insights(records, metrics, baseline_normal_records):
     if not records:
+        if any(metric["sample_count"] for metric in metrics):
+            return [
+                {
+                    "code": "showing_aggregated_history",
+                    "severity": "info",
+                    "title": "Showing retained minute-level history",
+                    "summary": (
+                        "No recent raw telemetry is available. Trend charts and forecasts "
+                        "are based on stored one-minute aggregates."
+                    ),
+                    "evidence": [],
+                    "recommended_actions": [],
+                    "interaction_summary": None,
+                    "event_id": None,
+                    "metric_names": [],
+                    "interaction_labels": [],
+                }
+            ]
         return [
             {
                 "code": "waiting_for_telemetry",
@@ -707,7 +973,11 @@ def _is_finite_number(value):
 
 
 def _existing_event_result(existing, event):
-    if existing.payload != event:
+    if existing.payload_digest:
+        matches = existing.payload_digest == canonical_digest(event)
+    else:
+        matches = existing.payload == event
+    if not matches:
         raise EventConflict()
     return IngestResult(record=existing, created=False)
 

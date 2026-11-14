@@ -53,6 +53,9 @@ class TelemetryEvent(models.Model):
     link_online = models.BooleanField()
     data_quality = models.CharField(max_length=16)
     payload = models.JSONField()
+    payload_digest = models.CharField(max_length=64, blank=True, default="")
+    aggregated_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    is_archived = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         ordering = ("-measured_at", "-event_id")
@@ -73,6 +76,37 @@ class TelemetryEvent(models.Model):
 
     def __str__(self):
         return self.event_id
+
+
+class TelemetryTrendBucket(models.Model):
+    profile = models.ForeignKey(
+        CrewProfile,
+        on_delete=models.CASCADE,
+        related_name="trend_buckets",
+    )
+    bucket_start = models.DateTimeField()
+    event_count = models.PositiveIntegerField(default=0)
+    metrics = models.JSONField(default=dict)
+    context_stats = models.JSONField(default=dict)
+    analysis_status_counts = models.JSONField(default=dict)
+    source_counts = models.JSONField(default=dict)
+    synthetic_event_count = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("bucket_start",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("profile", "bucket_start"),
+                name="api_trend_profile_minute",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=("profile", "-bucket_start"),
+                name="api_trend_profile_time",
+            )
+        ]
 
 
 class HealthAlert(models.Model):

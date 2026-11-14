@@ -14,7 +14,7 @@ from rest_framework.test import APITestCase
 from analytics.contracts import FEATURE_NAMES
 from analytics.detector import NonlinearAnomalyDetector
 from analytics.simulator import TelemetrySimulator
-from api.models import CrewProfile, HealthAlert, TelemetryEvent
+from api.models import CrewProfile, HealthAlert, TelemetryEvent, TelemetryTrendBucket
 from api.management.commands.bridge_analytics import Command as AnalyticsBridgeCommand
 from api.management.commands.run_mission_simulator import Command as MissionSimulatorCommand
 from api.management.commands.setup_demo import Command as SetupDemoCommand
@@ -274,6 +274,12 @@ class MissionApiTests(APITestCase):
         self.assertGreaterEqual(heart_rate["baseline_sample_count"], 5)
         self.assertEqual(heart_rate["latest_value"], interaction["measurements"]["hr_bpm"]["value"])
         self.assertGreaterEqual(len(heart_rate["history"]), 8)
+        self.assertEqual(
+            heart_rate["trend_model"]["model"],
+            "xgboost-profile-trend-v1",
+        )
+        self.assertEqual(heart_rate["trend_model"]["status"], "building_history")
+        self.assertEqual(report["summary"]["trend_model_ready_metric_count"], 0)
         nonlinear_insight = next(
             insight
             for insight in report["insights"]
@@ -304,6 +310,103 @@ class MissionApiTests(APITestCase):
         self.client.force_authenticate(user=other_user)
         forbidden = self.client.get("/api/v1/profiles/crew-01/insights/")
         self.assertEqual(forbidden.status_code, 403)
+
+    def test_compaction_preserves_alert_evidence_and_serves_minute_trends(self):
+        normal = self.event(20)
+        anomaly = self.event(21, "interaction_shift")
+        for event in (normal, anomaly):
+            response = self.client.post(
+                "/api/v1/telemetry/ingest/",
+                {"event": event},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 201)
+
+        with patch(
+            "api.management.commands.compact_telemetry.timezone.now",
+            return_value=datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc),
+        ):
+            call_command("compact_telemetry", stdout=StringIO())
+            call_command("compact_telemetry", stdout=StringIO())
+
+        archived_event = TelemetryEvent.objects.get(event_id=normal["event_id"])
+        self.assertTrue(archived_event.is_archived)
+        self.assertEqual(archived_event.payload, {})
+        self.assertTrue(archived_event.payload_digest)
+        preserved_event = TelemetryEvent.objects.get(event_id=anomaly["event_id"])
+        self.assertIsNotNone(preserved_event.aggregated_at)
+        self.assertFalse(preserved_event.is_archived)
+        self.assertEqual(preserved_event.payload, anomaly)
+        self.assertTrue(HealthAlert.objects.filter(event=preserved_event).exists())
+        bucket = TelemetryTrendBucket.objects.get(profile=self.profile)
+        self.assertEqual(bucket.event_count, 2)
+        self.assertEqual(bucket.metrics["hr_bpm"]["good_count"], 2)
+        category_stats = bucket.metrics["activity_type_code"]
+        self.assertEqual(
+            sum(category_stats["category_counts"].values()),
+            category_stats["good_count"],
+        )
+
+        duplicate = self.client.post(
+            "/api/v1/telemetry/ingest/",
+            {"event": normal},
+            format="json",
+        )
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertTrue(duplicate.data["duplicate"])
+        archived_detail = self.client.get(
+            f"/api/v1/telemetry/events/{normal['event_id']}/"
+        )
+        self.assertEqual(archived_detail.status_code, 404)
+        changed_archived_event = copy.deepcopy(normal)
+        changed_archived_event["measurements"]["hr_bpm"]["value"] += 1
+        changed_archived_event["feature_vector"][FEATURE_NAMES.index("hr_bpm")] += 1
+        conflict = self.client.post(
+            "/api/v1/telemetry/ingest/",
+            {"event": changed_archived_event},
+            format="json",
+        )
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(
+            MissionSimulatorCommand._next_sample_index(self.profile),
+            22,
+        )
+
+        dashboard = self.client.get("/api/v1/profiles/crew-01/dashboard/")
+        self.assertEqual(dashboard.data["event_count"], 2)
+        series = self.client.get(
+            "/api/v1/profiles/crew-01/series/",
+            {"feature": "hr_bpm", "limit": 10},
+        )
+        self.assertEqual(series.status_code, 200)
+        self.assertEqual(series.data["count"], 1)
+        self.assertEqual(series.data["points"][0]["source_type"], "minute_aggregate")
+        self.assertEqual(series.data["points"][0]["sample_count"], 2)
+
+        report = self.client.get("/api/v1/profiles/crew-01/insights/")
+        heart_rate = next(
+            metric for metric in report.data["metrics"] if metric["name"] == "hr_bpm"
+        )
+        self.assertEqual(heart_rate["history"][-1]["source_type"], "minute_aggregate")
+        self.assertEqual(heart_rate["history"][-1]["sample_count"], 2)
+
+        latest_missing = self.event(22)
+        hr_index = FEATURE_NAMES.index("hr_bpm")
+        latest_missing["measurements"]["hr_bpm"]["value"] = None
+        latest_missing["measurements"]["hr_bpm"]["quality"] = "missing"
+        latest_missing["feature_vector"][hr_index] = None
+        response = self.client.post(
+            "/api/v1/telemetry/ingest/",
+            {"event": latest_missing},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        report = self.client.get("/api/v1/profiles/crew-01/insights/")
+        heart_rate = next(
+            metric for metric in report.data["metrics"] if metric["name"] == "hr_bpm"
+        )
+        self.assertIsNone(heart_rate["latest_value"])
+        self.assertEqual(heart_rate["latest_quality"], "missing")
 
     def test_authenticated_stream_emits_canonical_events_and_resumes(self):
         first = self.event(13)

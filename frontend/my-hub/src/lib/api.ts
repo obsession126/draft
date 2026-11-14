@@ -111,7 +111,11 @@ export type Series = {
     value: number | null;
     unit: string;
     quality: string;
-    analysis_status: AnalysisStatus;
+    analysis_status: AnalysisStatus | null;
+    source_type: "event" | "minute_aggregate";
+    sample_count: number;
+    minimum_value: number | null;
+    maximum_value: number | null;
   }>;
   count: number;
 };
@@ -141,6 +145,9 @@ export type ProfileReport = {
     current_quality_issue_count: number;
     historical_shift_metric_count: number;
     historical_shift_metrics: string[];
+    trend_model_version: string;
+    trend_model_ready_metric_count: number;
+    trend_model_building_metric_count: number;
     latest_analysis: TelemetryPayload["analysis"] | null;
     interpretation_note: string;
   };
@@ -161,13 +168,30 @@ export type ProfileReport = {
     recent_median: number | null;
     recent_window_delta: number | null;
     trend_direction: string;
+    trend_model: {
+      model: string;
+      history_samples: number;
+      minimum_history_samples: number;
+      forecast_horizon_samples: number;
+      forecast_value: number | null;
+      holdout_median_absolute_error: number | null;
+      normalized_trend: number | null;
+      direction: string;
+      status: string;
+      unit: string;
+      context_features: string[];
+    };
     status: "data_quality" | "context" | "insufficient_history" | "shift" | "within_observed_range";
     history: Array<{
       event_id: string;
       measured_at: string;
       value: number | null;
       quality: string;
-      analysis_status: AnalysisStatus;
+      analysis_status: AnalysisStatus | null;
+      source_type: "event" | "minute_aggregate";
+      sample_count: number;
+      minimum_value: number | null;
+      maximum_value: number | null;
     }>;
   }>;
   insights: Array<{
