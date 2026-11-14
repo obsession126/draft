@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/space-health/telemetry-event.schema.json",
+  "title": "Synthetic astronaut telemetry event",
+  "description": "Schema v1.0 event returned by the analytics simulator. Values are synthetic and not clinical measurements.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "measured_at",
+    "recorded_at",
+    "source",
+    "is_synthetic",
+    "measurements",
+    "feature_names",
+    "feature_vector",
+    "context",
+    "analysis"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "measured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "const": "synthetic-simulator"
+    },
+    "is_synthetic": {
+      "const": true
+    },
+    "feature_names": {
+      "const": [
+        "hr_bpm",
+        "hrv_ms",
+        "systolic_bp_mmhg",
+        "diastolic_bp_mmhg",
+        "ecg_rr_interval_ms",
+        "spo2_percent",
+        "respiratory_rate_bpm",
+        "skin_temperature_c",
+        "sleep_duration_min",
+        "sleep_midpoint_hour",
+        "sleep_awakenings",
+        "sleep_quality_1_5",
+        "activity_duration_min",
+        "activity_type_code",
+        "activity_intensity_0_1",
+        "movement_rms_g",
+        "symptom_severity_0_10",
+        "symptom_type_code",
+        "stress_self_report_0_10",
+        "mood_self_report_0_10",
+        "alertness_self_report_0_10",
+        "radiation_dose_rate_usv_h",
+        "cumulative_dose_usv",
+        "cabin_temperature_c",
+        "cabin_pressure_kpa",
+        "cabin_humidity_percent",
+        "lighting_lux",
+        "noise_db",
+        "co2_ppm",
+        "o2_percent",
+        "bone_density_index",
+        "muscle_mass_index",
+        "oct_retinal_thickness_um",
+        "lab_inflammation_index",
+        "water_intake_ml",
+        "energy_intake_kcal"
+      ]
+    },
+    "feature_vector": {
+      "type": "array",
+      "minItems": 36,
+      "maxItems": 36,
+      "items": {
+        "type": [
+          "number",
+          "null"
+        ]
+      }
+    },
+    "measurements": {
+      "type": "object",
+      "required": [
+        "hr_bpm",
+        "hrv_ms",
+        "systolic_bp_mmhg",
+        "diastolic_bp_mmhg",
+        "ecg_rr_interval_ms",
+        "spo2_percent",
+        "respiratory_rate_bpm",
+        "skin_temperature_c",
+        "sleep_duration_min",
+        "sleep_midpoint_hour",
+        "sleep_awakenings",
+        "sleep_quality_1_5",
+        "activity_duration_min",
+        "activity_type_code",
+        "activity_intensity_0_1",
+        "movement_rms_g",
+        "symptom_severity_0_10",
+        "symptom_type_code",
+        "stress_self_report_0_10",
+        "mood_self_report_0_10",
+        "alertness_self_report_0_10",
+        "radiation_dose_rate_usv_h",
+        "cumulative_dose_usv",
+        "cabin_temperature_c",
+        "cabin_pressure_kpa",
+        "cabin_humidity_percent",
+        "lighting_lux",
+        "noise_db",
+        "co2_ppm",
+        "o2_percent",
+        "bone_density_index",
+        "muscle_mass_index",
+        "oct_retinal_thickness_um",
+        "lab_inflammation_index",
+        "water_intake_ml",
+        "energy_intake_kcal"
+      ],
+      "additionalProperties": {
+        "$ref": "#/$defs/measurement"
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile_id",
+        "mission_elapsed_min",
+        "mission_phase",
+        "eva_active",
+        "link_online",
+        "countermeasure_type",
+        "countermeasure_duration_min",
+        "countermeasure_completed",
+        "simulation_scenario"
+      ],
+      "properties": {
+        "profile_id": {
+          "type": "string"
+        },
+        "mission_elapsed_min": {
+          "type": "number"
+        },
+        "mission_phase": {
+          "type": "string"
+        },
+        "eva_active": {
+          "type": "boolean"
+        },
+        "link_online": {
+          "type": "boolean"
+        },
+        "countermeasure_type": {
+          "type": "string"
+        },
+        "countermeasure_duration_min": {
+          "type": "number"
+        },
+        "countermeasure_completed": {
+          "type": "boolean"
+        },
+        "simulation_scenario": {
+          "enum": [
+            "normal",
+            "interaction_shift",
+            "gradual_drift",
+            "sensor_artifact",
+            "signal_loss",
+            "radiation_event"
+          ]
+        }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "score",
+        "score_kind",
+        "threshold",
+        "detector",
+        "explanation",
+        "top_contributors",
+        "data_quality"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "normal",
+            "anomaly_review",
+            "data_quality_review",
+            "insufficient_data"
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "score_kind": {
+          "const": "empirical_tail_rank_not_probability"
+        },
+        "threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "detector": {
+          "const": "nonlinear-ensemble-v1"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "top_contributors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "features",
+              "label",
+              "deviation_magnitude",
+              "kind"
+            ],
+            "properties": {
+              "features": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "maxItems": 2
+              },
+              "label": {
+                "type": "string"
+              },
+              "deviation_magnitude": {
+                "type": "number",
+                "minimum": 0
+              },
+              "kind": {
+                "enum": [
+                  "feature",
+                  "interaction"
+                ]
+              }
+            }
+          }
+        },
+        "data_quality": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "valid_fraction",
+            "missing_features",
+            "low_quality_features",
+            "invalid_features",
+            "status"
+          ],
+          "properties": {
+            "valid_fraction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "missing_features": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "low_quality_features": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "invalid_features": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "status": {
+              "enum": [
+                "good",
+                "partial"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "unit",
+        "quality",
+        "source"
+      ],
+      "properties": {
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quality": {
+          "enum": [
+            "good",
+            "low",
+            "missing"
+          ]
+        },
+        "source": {
+          "const": "simulated"
+        }
+      }
+    }
+  }
+}
